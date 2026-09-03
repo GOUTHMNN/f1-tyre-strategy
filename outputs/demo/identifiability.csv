@@ -1,0 +1,4 @@
+Circuit,ReferenceCompound,MinFuelOverlap,OffsetsIdentified,Verdict
+Synthetic Bay,HARD,0.6875,True,offsets usable
+Synthetic Park,HARD,0.6000000000000001,True,offsets usable
+Synthetic Ring,HARD,0.8783783783783786,True,offsets usable

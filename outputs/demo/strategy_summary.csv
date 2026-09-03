@@ -1,0 +1,4 @@
+Circuit,TotalLaps,PitLossSeconds,OneStopFeasible,BestOneStopPlanUncapped,BestOneStopLapUncapped,BestOneStopPlan,BestOneStopLap,OneStopWindowLow,OneStopWindowHigh,BestTwoStopPlan,BestTwoStopLap1,BestTwoStopLap2,TwoStopMinusOneStopSeconds,RecommendedStops,Season,OffsetsIdentified
+Synthetic Bay,63,21.364647919312276,True,MEDIUM->HARD,28,HARD->MEDIUM,35,30,40,MEDIUM->MEDIUM->SOFT,23,46,2.0040331213049143,1,2024,True
+Synthetic Park,57,20.911269471071208,True,MEDIUM->SOFT,33,MEDIUM->SOFT,33,30,37,SOFT->MEDIUM->SOFT,17,39,3.989132610451051,1,2024,True
+Synthetic Ring,44,21.282188448030865,True,MEDIUM->SOFT,24,SOFT->MEDIUM,20,16,23,SOFT->SOFT->MEDIUM,14,29,9.538850992081848,1,2024,True

@@ -1,0 +1,7 @@
+Circuit,ReferenceCompound,MinFuelOverlap,OffsetsIdentified,Verdict
+Bahrain,HARD,0.5250000000000001,True,offsets usable
+Great Britain,MEDIUM,0.0,False,compound confounded with fuel load - offsets not identified
+Hungary,HARD,0.0,False,compound confounded with fuel load - offsets not identified
+Netherlands,HARD,0.0,False,compound confounded with fuel load - offsets not identified
+Spain,SOFT,0.13725490196078433,False,compound confounded with fuel load - offsets not identified
+United States,HARD,0.08823529411764694,False,compound confounded with fuel load - offsets not identified

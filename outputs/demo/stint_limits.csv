@@ -1,0 +1,10 @@
+Circuit,Compound,MaxObservedStintLaps,MedianStintLaps,MaxAllowedStintLaps
+Synthetic Bay,HARD,44,26.0,47
+Synthetic Bay,MEDIUM,41,25.0,44
+Synthetic Bay,SOFT,41,23.0,44
+Synthetic Park,HARD,36,22.0,39
+Synthetic Park,MEDIUM,39,22.0,42
+Synthetic Park,SOFT,38,24.0,41
+Synthetic Ring,HARD,31,19.0,34
+Synthetic Ring,MEDIUM,29,17.0,32
+Synthetic Ring,SOFT,29,20.0,32

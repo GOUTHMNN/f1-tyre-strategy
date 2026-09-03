@@ -1,0 +1,10 @@
+Step,LapsRemaining,RemovedByStep,PctOfRaw
+raw,2624,,100.0
+valid lap time,2624,0.0,100.0
+flagged accurate by FastF1,2624,0.0,100.0
+dry compounds only,2624,0.0,100.0
+green flag only,2432,192.0,92.7
+pit in/out laps dropped,2311,121.0,88.1
+stint warm-up laps dropped,2155,156.0,82.1
+stint outliers removed,2045,110.0,77.9
+short stints dropped,2018,27.0,76.9

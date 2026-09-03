@@ -1,0 +1,7 @@
+Circuit,TotalLaps,PitLossSeconds,OneStopFeasible,BestOneStopPlanUncapped,BestOneStopLapUncapped,BestOneStopPlan,BestOneStopLap,OneStopWindowLow,OneStopWindowHigh,OneStopInfeasibleReason,BestTwoStopPlan,BestTwoStopLap1,BestTwoStopLap2,TwoStopMinusOneStopSeconds,RecommendedStops,Season,OffsetsIdentified,MedianFirstStopLap,MedianStopsPerDriver,NDrivers,StopLapError,ModelStopsEarlier,StopCountAgrees
+Bahrain,57,24.271000000000015,False,HARD->SOFT,31,,,,,no two compounds can cover 57 laps within their observed stint limits,HARD->SOFT->HARD,20,37,,2,2024,True,12.5,2.0,20,,False,True
+Great Britain,52,25.34700000000001,False,HARD->MEDIUM,29,,,,,no two compounds can cover 52 laps within their observed stint limits,MEDIUM->HARD->HARD,16,34,,2,2024,False,26.0,2.0,19,,False,True
+Hungary,70,20.364000000000004,True,HARD->MEDIUM,33,HARD->MEDIUM,36.0,36.0,37.0,,HARD->MEDIUM->MEDIUM,21,46,-14.392896117045595,2,2024,False,16.0,2.0,20,20.0,False,True
+Netherlands,72,23.086499999999972,True,SOFT->HARD,30,HARD->SOFT,46.0,46.0,47.0,,HARD->HARD->SOFT,26,52,-4.611699582977849,2,2024,False,27.5,1.0,20,18.5,False,False
+Spain,66,22.787000000000006,True,MEDIUM->HARD,33,HARD->MEDIUM,33.0,33.0,36.0,,MEDIUM->MEDIUM->SOFT,23,46,-4.722191394683364,2,2024,False,15.0,2.0,20,18.0,False,True
+United States,56,21.99600000000001,True,HARD->MEDIUM,29,HARD->MEDIUM,29.0,24.0,35.0,,MEDIUM->MEDIUM->HARD,20,39,13.049271668644273,1,2024,False,26.0,1.0,19,3.0,False,True
