@@ -1,7 +1,7 @@
-Circuit,TotalLaps,PitLossSeconds,OneStopFeasible,BestOneStopPlanUncapped,BestOneStopLapUncapped,BestOneStopPlan,BestOneStopLap,OneStopWindowLow,OneStopWindowHigh,OneStopInfeasibleReason,BestTwoStopPlan,BestTwoStopLap1,BestTwoStopLap2,TwoStopMinusOneStopSeconds,RecommendedStops,Season,OffsetsIdentified
-Bahrain,57,24.271000000000015,False,HARD->SOFT,31,,,,,no two compounds can cover 57 laps within their observed stint limits,HARD->SOFT->HARD,20,37,,2,2024,True
-Great Britain,52,25.34700000000001,False,HARD->MEDIUM,29,,,,,no two compounds can cover 52 laps within their observed stint limits,MEDIUM->HARD->HARD,16,34,,2,2024,False
-Hungary,70,20.364000000000004,True,HARD->MEDIUM,33,HARD->MEDIUM,36.0,36.0,37.0,,HARD->MEDIUM->MEDIUM,21,46,-14.392896117045595,2,2024,False
-Netherlands,72,23.086499999999972,True,SOFT->HARD,30,HARD->SOFT,46.0,46.0,47.0,,HARD->HARD->SOFT,26,52,-4.611699582977849,2,2024,False
-Spain,66,22.787000000000006,True,MEDIUM->HARD,33,HARD->MEDIUM,33.0,33.0,36.0,,MEDIUM->MEDIUM->SOFT,23,46,-4.722191394683364,2,2024,False
-United States,56,21.99600000000001,True,HARD->MEDIUM,29,HARD->MEDIUM,29.0,24.0,35.0,,MEDIUM->MEDIUM->HARD,20,39,13.049271668644273,1,2024,False
+Circuit,TotalLaps,PitLossSeconds,OneStopFeasible,BestOneStopPlanUncapped,BestOneStopLapUncapped,BestOneStopLapLinearOnly,BestTwoStopLap1LinearOnly,RecommendedStopsLinearOnly,BestOneStopPlan,BestOneStopLap,OneStopWindowLow,OneStopWindowHigh,BestTwoStopPlan,BestTwoStopLap1,BestTwoStopLap2,TwoStopMinusOneStopSeconds,RecommendedStops,Season,OffsetsIdentified
+Bahrain,57,24.271000000000015,True,SOFT->HARD,23,25,15,2,SOFT->HARD,25,25,26,SOFT->HARD->HARD,15,36,-12.313296133827905,2,2024,True
+Great Britain,52,25.34700000000001,True,HARD->MEDIUM,27,27,17,1,HARD->MEDIUM,27,23,32,MEDIUM->HARD->MEDIUM,17,35,16.8168069596869,1,2024,False
+Hungary,70,20.364000000000004,True,MEDIUM->SOFT,40,40,26,2,MEDIUM->SOFT,40,38,43,MEDIUM->SOFT->SOFT,26,48,-15.644955485945985,2,2024,True
+Netherlands,72,23.086499999999972,True,HARD->MEDIUM,40,40,26,2,HARD->MEDIUM,40,37,44,HARD->MEDIUM->HARD,26,46,-0.04555354347668583,2,2024,False
+Spain,66,22.787000000000006,True,HARD->MEDIUM,34,34,22,2,HARD->MEDIUM,34,31,37,HARD->MEDIUM->MEDIUM,22,44,-5.141919267120116,2,2024,True
+United States,56,21.99600000000001,True,HARD->MEDIUM,30,30,18,1,HARD->MEDIUM,30,26,34,HARD->MEDIUM->MEDIUM,18,37,6.360947512793018,1,2024,False

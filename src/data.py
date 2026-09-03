@@ -13,7 +13,7 @@ import warnings
 
 import pandas as pd
 
-from .config import CACHE_DIR, DATA_DIR, SEASON, Race
+from .config import CACHE_DIR, DATA_DIR, SEASON, SEASONS, Circuit
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +50,38 @@ def _enable_cache(cache_dir: str = CACHE_DIR) -> None:
     fastf1.Cache.enable_cache(cache_dir)
 
 
-def load_race(race: Race, season: int = SEASON, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
-    """Load one race by round number and return a tidy lap table.
+def resolve_round(circuit: Circuit, season: int, cache_dir: str = CACHE_DIR) -> int:
+    """Find the round number for a circuit in a season by exact name match.
 
-    The round number is resolved to an event and the event's official name is
-    checked against `race.expect_event` before any lap is returned. A silent
-    substitution here is the most expensive kind of bug in the project: nothing
-    downstream errors, every table fills in, and the entire analysis describes a
-    circuit nobody meant to study.
+    Exact, not fuzzy, and it insists on exactly one hit. FastF1's own matcher
+    will cheerfully accept a near miss and hand back a different Grand Prix;
+    requiring a unique exact match is what makes the substitution impossible
+    rather than merely unlikely.
+    """
+    import fastf1
+
+    _enable_cache(cache_dir)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        schedule = fastf1.get_event_schedule(season)
+
+    hits = schedule[schedule["EventName"] == circuit.event_name]
+    if len(hits) != 1:
+        raise EventMismatch(
+            f"'{circuit.event_name}' matched {len(hits)} events in {season}; "
+            "expected exactly one."
+        )
+    return int(hits["RoundNumber"].iloc[0])
+
+
+def load_race(circuit: Circuit, season: int = SEASON, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
+    """Load one race and return a tidy lap table.
+
+    The round is resolved from the schedule by exact name, and the event that
+    comes back is verified against the name that was asked for before any lap is
+    returned. A silent substitution here is the most expensive kind of bug in
+    the project: nothing downstream errors, every table fills in, and the entire
+    analysis describes a circuit nobody meant to study.
 
     Raises EventMismatch if the wrong event comes back, and RuntimeError if the
     session loads but contains no laps - which is how a blocked network or an
@@ -65,18 +89,17 @@ def load_race(race: Race, season: int = SEASON, cache_dir: str = CACHE_DIR) -> p
     """
     import fastf1
 
-    _enable_cache(cache_dir)
+    round_number = resolve_round(circuit, season, cache_dir)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        event = fastf1.get_event(season, race.round_number)
+        event = fastf1.get_event(season, round_number)
         actual_name = str(event["EventName"])
 
-        if actual_name != race.expect_event:
+        if actual_name != circuit.event_name:
             raise EventMismatch(
-                f"{season} round {race.round_number} is '{actual_name}', but the "
-                f"study expects '{race.expect_event}'. Either the round number is "
-                f"wrong or the season's calendar differs from the one configured."
+                f"{season} round {round_number} is '{actual_name}', but the study "
+                f"expects '{circuit.event_name}'."
             )
 
         session = event.get_session("R")
@@ -110,9 +133,9 @@ def load_race(race: Race, season: int = SEASON, cache_dir: str = CACHE_DIR) -> p
     # `Circuit` is the study's short label; `EventName` is what the API actually
     # returned. Keeping both means a mislabelling can never again hide, because
     # the two can be compared in the saved data long after the run.
-    df["Circuit"] = race.label
+    df["Circuit"] = circuit.label
     df["EventName"] = actual_name
-    df["RoundNumber"] = int(race.round_number)
+    df["RoundNumber"] = round_number
     df["Season"] = season
     total_laps = getattr(session, "total_laps", None) or int(df["LapNumber"].max())
     df["TotalLaps"] = float(total_laps)
@@ -121,28 +144,32 @@ def load_race(race: Race, season: int = SEASON, cache_dir: str = CACHE_DIR) -> p
 
 
 def load_races(
-    races: list[Race], season: int = SEASON, cache_dir: str = CACHE_DIR
+    circuits: list[Circuit],
+    seasons: list[int] | None = None,
+    cache_dir: str = CACHE_DIR,
 ) -> pd.DataFrame:
-    """Load several races, skipping any that fail rather than aborting the run.
+    """Load every circuit for every season, skipping races that fail to download.
 
     An EventMismatch is *not* skipped. A race that fails to download leaves the
     study with less data; a race that downloads the wrong circuit leaves it with
     a confident wrong answer, so that one stops everything.
     """
+    seasons = list(seasons if seasons is not None else SEASONS)
     frames = []
-    for race in races:
-        try:
-            frame = load_race(race, season=season, cache_dir=cache_dir)
-        except EventMismatch:
-            raise
-        except Exception as exc:  # noqa: BLE001 - one bad race must not kill the study
-            log.warning("Skipping %s round %d (%s): %s", season, race.round_number, race.label, exc)
-            continue
-        log.info(
-            "Loaded %s round %-2d %-14s -> %-24s %d laps",
-            season, race.round_number, race.label, frame["EventName"].iloc[0], len(frame),
-        )
-        frames.append(frame)
+    for season in seasons:
+        for circuit in circuits:
+            try:
+                frame = load_race(circuit, season=season, cache_dir=cache_dir)
+            except EventMismatch:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one bad race must not kill the study
+                log.warning("Skipping %s %s: %s", season, circuit.label, exc)
+                continue
+            log.info(
+                "Loaded %s %-14s -> %-24s %d laps",
+                season, circuit.label, frame["EventName"].iloc[0], len(frame),
+            )
+            frames.append(frame)
 
     if not frames:
         raise RuntimeError("No races loaded successfully.")

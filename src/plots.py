@@ -391,3 +391,67 @@ def plot_fuel_estimates(fuel: pd.DataFrame, a, outdir: str = OUTPUT_DIR) -> list
         return fig
 
     return _both_modes(draw, "fuel-effect-estimated", outdir)
+
+
+def plot_backtest(summary: pd.DataFrame, outdir: str = OUTPUT_DIR) -> list[str]:
+    """Held-out error against the baselines it has to beat.
+
+    The most important chart in the repository, because it is the only one
+    scoring predictions on races the model never saw. Grouped bars rather than a
+    dot plot: these are errors of a single kind being compared like for like, a
+    zero baseline is meaningful, and the comparison the reader needs is height
+    against height.
+
+    The persistence bar is drawn in the emphasis colour because it is the bar
+    that matters. A tyre model that cannot beat "stop where this circuit was
+    stopped at last year" has not earned its complexity, and hiding that behind
+    a friendlier baseline would make this figure decorative rather than honest.
+    """
+
+    def draw(theme: dict):
+        df = summary.copy()
+        df["Label"] = df.apply(
+            lambda r: f"{int(r['TestSeason'])}" + ("\n(dry only)" if r["DryRacesOnly"] else ""),
+            axis=1,
+        )
+        df = df.sort_values(["TestSeason", "DryRacesOnly"])
+
+        series = [
+            ("ModelMAELaps", "This model", theme["MEDIUM"]),
+            ("PersistenceMAELaps", "Last season's stop lap", theme["SOFT"]),
+            ("BaselineMAELaps", "Half distance", theme["grid"]),
+        ]
+        n_groups, n_series = len(df), len(series)
+        width = 0.8 / n_series
+        idx = np.arange(n_groups)
+
+        fig, ax = plt.subplots(figsize=(9, 4.8))
+        for k, (col, label, colour) in enumerate(series):
+            offset = (k - (n_series - 1) / 2) * width
+            values = df[col].to_numpy(dtype=float)
+            ax.bar(idx + offset, values, width=width * 0.92, color=colour,
+                   label=label, zorder=3, linewidth=0)
+            for x, v in zip(idx + offset, values):
+                if np.isfinite(v):
+                    ax.annotate(f"{v:.1f}", (x, v), xytext=(0, 4),
+                                textcoords="offset points", ha="center",
+                                fontsize=8.5, color=theme["muted"])
+
+        ax.set_xticks(idx)
+        ax.set_xticklabels(df["Label"], color=theme["text"], fontsize=10)
+        ax.grid(axis="x", visible=False)
+
+        _style(
+            ax, theme,
+            ylabel="Mean absolute error, first stop (laps)",
+            title="Predicting a season the model never saw",
+            subtitle="Lower is better. The model beats half distance and loses to simply repeating last season's stop lap.",
+        )
+        leg = ax.legend(frameon=False, fontsize=9.5, ncols=3, loc="lower left",
+                        bbox_to_anchor=(0.0, 1.0), borderaxespad=0.0)
+        for text in leg.get_texts():
+            text.set_color(theme["text"])
+        fig.subplots_adjust(top=0.78)
+        return fig
+
+    return _both_modes(draw, "backtest-vs-baseline", outdir)

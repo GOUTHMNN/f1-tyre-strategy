@@ -22,22 +22,38 @@ import pandas as pd
 from .config import ASSUMPTIONS, Assumptions
 
 
-def stint_time(deg_per_lap: float, offset: float, n_laps: int) -> float:
+def stint_time(
+    deg_per_lap: float, offset: float, n_laps: int, curvature: float = 0.0
+) -> float:
     """Total time lost by one stint, relative to an arbitrary base pace.
 
-    Lap k of a stint runs on a tyre of age k, so a linear degradation model
-    gives a total of deg * (1 + 2 + ... + n) = deg * n(n+1)/2, plus the
-    compound's pace offset on every lap. Base pace is excluded because it is
-    identical for every strategy and cancels in any comparison.
+    Lap k of a stint runs on a tyre of age k, so with a loss per lap of
+    `deg + curvature * k` the stint totals
 
-    Fuel is absent for the same reason: fuel load depends on the lap number, not
-    on the strategy, so its contribution to total race time is the same whenever
-    the car stops. This is exactly why the degradation slopes had to be
-    fuel-corrected before they could be used here.
+        offset * n  +  deg * n(n+1)/2  +  curvature * n(n+1)(2n+1)/6
+
+    using the closed forms for the sum of the first n integers and their
+    squares. With `curvature = 0` this is exactly the linear model.
+
+    The curvature term is why the third term is here at all. Pricing a stint
+    linearly says a tyre's twentieth lap costs the same as its second, which the
+    study's own late-stint measurements refute at five of six circuits - and
+    since under-charging long stints is precisely what makes an optimiser stop
+    too late, the missing term was a candidate explanation for the model's
+    largest disagreement with reality.
+
+    Base pace is excluded because it is identical for every strategy and cancels
+    in any comparison. Fuel is absent for the same reason: its cost depends on
+    the lap number, not on the strategy, so it is the same whenever the car
+    stops. That is exactly why the slopes had to be fuel-corrected first.
     """
     if n_laps <= 0:
         return 0.0
-    return offset * n_laps + deg_per_lap * n_laps * (n_laps + 1) / 2.0
+    n = float(n_laps)
+    total = offset * n + deg_per_lap * n * (n + 1) / 2.0
+    if curvature:
+        total += curvature * n * (n + 1) * (2 * n + 1) / 6.0
+    return total
 
 
 def evaluate_plan(
@@ -47,6 +63,7 @@ def evaluate_plan(
     offsets: dict[str, float],
     pit_loss: float,
     undercut_gain_s: float = 0.0,
+    curvature: dict[str, float] | None = None,
 ) -> float:
     """Total relative race time for a full strategy.
 
@@ -57,8 +74,10 @@ def evaluate_plan(
     specific question - how big would the undercut have to be to explain why
     real teams stop so much earlier than the tyre arithmetic alone suggests?
     """
+    curvature = curvature or {}
     total = sum(
-        stint_time(deg[c], offsets[c], n) for c, n in zip(compounds, stint_lengths)
+        stint_time(deg[c], offsets[c], n, curvature.get(c, 0.0))
+        for c, n in zip(compounds, stint_lengths)
     )
     n_stops = len(stint_lengths) - 1
     return total + (pit_loss - undercut_gain_s) * n_stops
@@ -95,6 +114,7 @@ def optimise_one_stop(
     min_stint: int = 5,
     max_stint: dict[str, int] | None = None,
     undercut_gain_s: float = 0.0,
+    curvature: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Search every one-stop plan: which two compounds, and which stop lap.
 
@@ -120,7 +140,7 @@ def optimise_one_stop(
                     "Compound2": c2,
                     "StopLap": stop_lap,
                     "RelativeRaceTime": evaluate_plan(
-                        (n1, n2), (c1, c2), deg, offsets, pit_loss, undercut_gain_s
+                        (n1, n2), (c1, c2), deg, offsets, pit_loss, undercut_gain_s, curvature
                     ),
                 }
             )
@@ -141,6 +161,7 @@ def optimise_two_stop(
     step: int = 1,
     max_stint: dict[str, int] | None = None,
     undercut_gain_s: float = 0.0,
+    curvature: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Search two-stop plans, so the one-stop recommendation has competition.
 
@@ -165,7 +186,7 @@ def optimise_two_stop(
                         "StopLap1": stop1,
                         "StopLap2": stop2,
                         "RelativeRaceTime": evaluate_plan(
-                            lengths, combo, deg, offsets, pit_loss, undercut_gain_s
+                            lengths, combo, deg, offsets, pit_loss, undercut_gain_s, curvature
                         ),
                     }
                 )
@@ -183,6 +204,7 @@ def optimal_summary(
     offsets: dict[str, float],
     pit_loss: float,
     max_stint: dict[str, int] | None = None,
+    curvature: dict[str, float] | None = None,
     a: Assumptions = ASSUMPTIONS,
 ) -> dict:
     """Best one-stop, best two-stop, and the margin between them.
@@ -197,12 +219,31 @@ def optimal_summary(
     disagree the reader can see exactly how much of the recommendation rests on
     it.
     """
-    kwargs = {"max_stint": max_stint, "undercut_gain_s": a.undercut_gain_s}
+    kwargs = {
+        "max_stint": max_stint,
+        "undercut_gain_s": a.undercut_gain_s,
+        "curvature": curvature,
+    }
     one = optimise_one_stop(total_laps, deg, offsets, pit_loss, **kwargs)
     two = optimise_two_stop(total_laps, deg, offsets, pit_loss, **kwargs)
 
     uncapped = optimise_one_stop(
-        total_laps, deg, offsets, pit_loss, undercut_gain_s=a.undercut_gain_s
+        total_laps, deg, offsets, pit_loss,
+        undercut_gain_s=a.undercut_gain_s, curvature=curvature,
+    )
+
+    # What the straight-line model would have said, kept beside the curved
+    # answer so the effect of pricing the cliff is visible rather than asserted.
+    # Both plan shapes are re-searched without curvature, because comparing a
+    # curved two-stop against a linear *one*-stop would measure the plan shape
+    # rather than the curvature.
+    linear_only = optimise_one_stop(
+        total_laps, deg, offsets, pit_loss,
+        max_stint=max_stint, undercut_gain_s=a.undercut_gain_s,
+    )
+    linear_two = optimise_two_stop(
+        total_laps, deg, offsets, pit_loss,
+        max_stint=max_stint, undercut_gain_s=a.undercut_gain_s,
     )
 
     result = {
@@ -212,6 +253,21 @@ def optimal_summary(
         "OneStopFeasible": not one.empty,
         "BestOneStopPlanUncapped": uncapped.iloc[0]["Plan"] if not uncapped.empty else None,
         "BestOneStopLapUncapped": int(uncapped.iloc[0]["StopLap"]) if not uncapped.empty else np.nan,
+        "BestOneStopLapLinearOnly": (
+            int(linear_only.iloc[0]["StopLap"]) if not linear_only.empty else np.nan
+        ),
+        "BestTwoStopLap1LinearOnly": (
+            int(linear_two.iloc[0]["StopLap1"]) if not linear_two.empty else np.nan
+        ),
+        "RecommendedStopsLinearOnly": (
+            2
+            if linear_only.empty
+            or (
+                not linear_two.empty
+                and linear_two.iloc[0]["RelativeRaceTime"] <= linear_only.iloc[0]["RelativeRaceTime"]
+            )
+            else 1
+        ),
     }
 
     if one.empty and two.empty:

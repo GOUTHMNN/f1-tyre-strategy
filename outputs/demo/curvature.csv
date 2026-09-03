@@ -1,0 +1,10 @@
+Circuit,Compound,NStints,CurvatureSecPerLap2,CurvatureCILow,CurvatureCIHigh,Usable,AppliedCurvature,ExcludedReason
+Synthetic Bay,HARD,11,0.0008971639189012794,-0.0006005186958156821,0.004034101035348054,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Bay,MEDIUM,11,-0.0004171171170887969,-0.0018280001215336367,0.0007903361991803826,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Bay,SOFT,9,-0.0004824129751619534,-0.001353145545085021,0.00032614031494612494,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Park,HARD,11,0.00040120905131325706,-0.0007291129298672845,0.001961466501497017,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Park,MEDIUM,10,0.0001827521166523917,-0.0007249638949936517,0.001190342068100292,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Park,SOFT,8,-6.90657140393392e-05,-0.0011845777405874586,0.0009375637332005753,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Ring,HARD,8,-0.001143457463766808,-0.002611436038176896,-0.0001261334416769894,False,0.0,"interval includes zero, indistinguishable from linear"
+Synthetic Ring,MEDIUM,7,-0.00015119465279444,-0.0025566820445720954,0.001432311475305594,False,0.0,"only 7 stint(s), need 8"
+Synthetic Ring,SOFT,8,-0.00033555574229191437,-0.0028151534922258316,0.0016272148615782422,False,0.0,"interval includes zero, indistinguishable from linear"

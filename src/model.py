@@ -27,7 +27,7 @@ import pandas as pd
 from scipy import stats
 
 from .clean import STINT_KEYS
-from .config import ASSUMPTIONS, Assumptions
+from .config import ASSUMPTIONS, DRY_COMPOUNDS, Assumptions
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +243,17 @@ def _build_design(sub: pd.DataFrame, compounds: list[str], reference: str):
     *across* stints: the same driver starts stint 2 on a fresh tyre with a much
     lighter car, and it is that contrast which separates the two effects.
     """
-    drivers = sorted(sub["Driver"].unique())
+    # Driver *and season*: the same name in 2022 and 2024 is a different car, a
+    # different power unit and a different aero regulation. Pooling those into
+    # one baseline would push several seasons of car development into the
+    # compound terms, which is the very confusion this model exists to avoid.
+    entrant = sub["Season"].astype(str) + "|" + sub["Driver"].astype(str)
+    entrants = sorted(entrant.unique())
     non_ref = [c for c in compounds if c != reference]
 
     cols, names = [], []
-    for d in drivers:
-        cols.append((sub["Driver"] == d).to_numpy(dtype=float))
+    for d in entrants:
+        cols.append((entrant == d).to_numpy(dtype=float))
         names.append(f"driver[{d}]")
     for c in non_ref:
         cols.append((sub["Compound"] == c).to_numpy(dtype=float))
@@ -295,7 +300,7 @@ def _fuel_overlap(sub: pd.DataFrame, compound: str, reference: str) -> float:
 
 
 def fit_joint_model(
-    laps: pd.DataFrame, a: Assumptions = ASSUMPTIONS
+    laps: pd.DataFrame, a: Assumptions = ASSUMPTIONS, bootstrap: bool = True
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit the joint fuel/degradation/offset model, one circuit at a time.
 
@@ -303,6 +308,12 @@ def fit_joint_model(
     intervals come from a cluster bootstrap that resamples whole stints, because
     laps within a stint are anything but independent and resampling them
     individually would produce intervals that are narrow and wrong.
+
+    `bootstrap=False` returns the point estimates with the intervals left as NaN.
+    The bootstrap is the whole cost of this function - several hundred refits of
+    a robust regression - and the assumption sweeps call it dozens of times while
+    reading nothing but the point estimates. Skipping it there turns a sweep from
+    minutes into seconds and changes no number that the sweep reports.
     """
     rng = np.random.default_rng(a.random_seed)
     compound_rows, fuel_rows = [], []
@@ -331,8 +342,8 @@ def fit_joint_model(
         # Cluster bootstrap over whole stints.
         stint_ids = sub_ok.groupby(STINT_KEYS, sort=False).ngroup().to_numpy()
         groups = [np.flatnonzero(stint_ids == g) for g in np.unique(stint_ids)]
-        draws = np.full((a.n_bootstrap_joint, X.shape[1]), np.nan)
-        for b in range(a.n_bootstrap_joint):
+        draws = np.full((a.n_bootstrap_joint if bootstrap else 0, X.shape[1]), np.nan)
+        for b in range(draws.shape[0]):
             pick = rng.integers(0, len(groups), len(groups))
             idx = np.concatenate([groups[p] for p in pick])
             try:
@@ -341,6 +352,8 @@ def fit_joint_model(
                 continue
 
         def ci(j: int) -> tuple[float, float]:
+            if draws.shape[0] == 0:
+                return (np.nan, np.nan)
             col = draws[:, j]
             col = col[np.isfinite(col)]
             if len(col) < 20:
@@ -551,6 +564,8 @@ def observed_stint_limits(laps: pd.DataFrame, a: Assumptions = ASSUMPTIONS) -> p
                 "MaxAllowedStintLaps": int(per_stint.max()) + a.max_stint_margin_laps,
             }
         )
+    if not rows:
+        return pd.DataFrame()
     return pd.DataFrame(rows).sort_values(["Circuit", "Compound"]).reset_index(drop=True)
 
 
@@ -689,3 +704,225 @@ def summarise_late_stint_penalty(penalty: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .sort_values("MedianExtraSeconds", ascending=False)
     )
+
+
+# ---------------------------------------------------------------------------
+# Curvature: pricing the cliff instead of pretending it is a straight line
+# ---------------------------------------------------------------------------
+
+def fit_stint_curvature(laps: pd.DataFrame, a: Assumptions = ASSUMPTIONS) -> pd.DataFrame:
+    """Fit a robust quadratic to each stint and keep the curvature term.
+
+    `late_stint_penalty` establishes *that* wear accelerates; this measures the
+    acceleration in a form the strategy model can price. Fitting
+
+        lap time = c0 + c1 * age + c2 * age^2
+
+    makes c2 the rate at which the loss per lap itself grows. A positive c2 is a
+    tyre falling away; zero is the straight line the optimiser used to assume.
+
+    Huber weighting rather than plain least squares, for the same reason the
+    linear fits use Theil-Sen: a quadratic is more flexible than a line and so
+    even more willing to bend itself around a handful of traffic laps at the end
+    of a stint, which is precisely where the curvature is being read from.
+    """
+    rows = []
+    for keys, stint in laps.groupby(STINT_KEYS):
+        x = stint["TyreLife"].to_numpy(dtype=float)
+        y = stint["LapTimeFuelCorrected"].to_numpy(dtype=float)
+        if len(x) < a.min_laps_for_curvature or np.ptp(x) == 0:
+            continue
+
+        X = np.column_stack([np.ones_like(x), x, x**2])
+        beta, rank = _huber_irls(X, y, a.huber_delta_s)
+        if rank < 3:
+            continue
+
+        rows.append(
+            {
+                **dict(zip(STINT_KEYS, keys)),
+                "Compound": stint["Compound"].iloc[0],
+                "NLaps": len(x),
+                "LinearTerm": float(beta[1]),
+                "CurvatureTerm": float(beta[2]),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def pool_curvature(
+    curvature_fits: pd.DataFrame, a: Assumptions = ASSUMPTIONS
+) -> pd.DataFrame:
+    """Pool per-stint curvature into one value per circuit and compound.
+
+    Curvature is a second derivative read off ~20 noisy laps, so it is far less
+    stable than a slope and is treated with matching suspicion. A pooled value
+    reaches the optimiser only when it clears three hurdles: enough stints, a
+    bootstrap interval that excludes zero, and a positive sign.
+
+    Where it does not clear them the curvature is set to exactly zero and the
+    model falls back to the straight line. That is a deliberate asymmetry. A
+    curvature term that is wrong in the positive direction invents a cliff and
+    stops the car far too early; falling back to linear merely returns the model
+    to the bias it already had and has already reported.
+    """
+    if curvature_fits.empty:
+        return pd.DataFrame()
+
+    rng = np.random.default_rng(a.random_seed)
+    rows = []
+    for (circuit, compound), group in curvature_fits.groupby(["Circuit", "Compound"]):
+        values = group["CurvatureTerm"].to_numpy(dtype=float)
+        weights = group["NLaps"].to_numpy(dtype=float)
+        mask = np.isfinite(values) & np.isfinite(weights)
+        values, weights = values[mask], weights[mask]
+        if len(values) == 0:
+            continue
+
+        mean = float(np.average(values, weights=weights))
+
+        lo = hi = np.nan
+        if len(values) >= 2:
+            draws = np.empty(a.n_bootstrap)
+            for i in range(a.n_bootstrap):
+                idx = rng.integers(0, len(values), len(values))
+                w = weights[idx]
+                draws[i] = np.average(values[idx], weights=w) if w.sum() > 0 else np.nan
+            lo, hi = np.nanpercentile(draws, [2.5, 97.5])
+
+        n_stints = int(len(values))
+        reason = ""
+        if n_stints < a.min_stints_for_curvature:
+            reason = f"only {n_stints} stint(s), need {a.min_stints_for_curvature}"
+        elif not np.isfinite(lo):
+            reason = "no finite confidence interval"
+        elif lo <= 0:
+            reason = "interval includes zero, indistinguishable from linear"
+        elif mean <= 0:
+            reason = "curvature not positive"
+
+        rows.append(
+            {
+                "Circuit": circuit,
+                "Compound": compound,
+                "NStints": n_stints,
+                "CurvatureSecPerLap2": mean,
+                "CurvatureCILow": lo,
+                "CurvatureCIHigh": hi,
+                "Usable": reason == "",
+                # What the optimiser is actually handed: the measured value when
+                # it is trustworthy, and an honest zero when it is not.
+                "AppliedCurvature": mean if reason == "" else 0.0,
+                "ExcludedReason": reason,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(["Circuit", "Compound"]).reset_index(drop=True)
+
+
+def season_heterogeneity(
+    stint_fits: pd.DataFrame, a: Assumptions = ASSUMPTIONS
+) -> pd.DataFrame:
+    """Do the seasons agree about a circuit and compound, or are they different tyres?
+
+    Pooling three seasons is what finally makes compound offsets identifiable,
+    but it buys that at a price: "SOFT" is a label, not a rubber. Pirelli
+    allocates C1-C5 per event and the mapping moves between years, so the soft at
+    Barcelona in 2022 may be a materially different tyre from the soft in 2024 -
+    and pooling two different tyres into one number produces an average of
+    something that never existed.
+
+    The honest defence is to look. Each season's degradation is estimated
+    separately and the bootstrap intervals compared; where two seasons' intervals
+    are disjoint the pooled figure is flagged as covering compounds that do not
+    behave alike. This does not decide anything on its own - it tells the reader
+    which pooled cells to distrust.
+    """
+    if stint_fits.empty:
+        return pd.DataFrame()
+
+    per_season = []
+    for (season, circuit, compound), group in stint_fits.groupby(
+        ["Season", "Circuit", "Compound"]
+    ):
+        values = group["SlopeSecPerLap"].to_numpy(dtype=float)
+        weights = group["NLaps"].to_numpy(dtype=float)
+        std_errors = (
+            group["SlopeCIHigh"].to_numpy(dtype=float)
+            - group["SlopeCILow"].to_numpy(dtype=float)
+        ) / (2 * 1.96)
+        mask = np.isfinite(values) & np.isfinite(weights)
+        values, weights, std_errors = values[mask], weights[mask], std_errors[mask]
+        if len(values) < 2:
+            continue
+        lo, hi = _bootstrap_mean(values, weights, std_errors, a)
+        per_season.append(
+            {
+                "Season": season,
+                "Circuit": circuit,
+                "Compound": compound,
+                "NStints": int(len(values)),
+                "DegSecPerLap": float(np.average(values, weights=weights)),
+                "CILow": lo,
+                "CIHigh": hi,
+            }
+        )
+
+    seasons_df = pd.DataFrame(per_season)
+    if seasons_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for (circuit, compound), group in seasons_df.groupby(["Circuit", "Compound"]):
+        group = group.dropna(subset=["CILow", "CIHigh"])
+        if len(group) < 2:
+            continue
+
+        disjoint = False
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a_row, b_row = group.iloc[i], group.iloc[j]
+                if a_row["CIHigh"] < b_row["CILow"] or b_row["CIHigh"] < a_row["CILow"]:
+                    disjoint = True
+
+        rows.append(
+            {
+                "Circuit": circuit,
+                "Compound": compound,
+                "NSeasons": int(len(group)),
+                "Seasons": ",".join(str(int(s)) for s in sorted(group["Season"])),
+                "MinDeg": float(group["DegSecPerLap"].min()),
+                "MaxDeg": float(group["DegSecPerLap"].max()),
+                "SpreadSecPerLap": float(group["DegSecPerLap"].max() - group["DegSecPerLap"].min()),
+                "SeasonsDisagree": disjoint,
+            }
+        )
+
+    if not rows:
+        # One season, or no compound measured twice: there is nothing to compare,
+        # which is a legitimate state rather than an error. Returning an empty
+        # frame keeps callers uniform.
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("SpreadSecPerLap", ascending=False).reset_index(drop=True)
+
+
+def wet_race_report(raw_laps: pd.DataFrame, a: Assumptions = ASSUMPTIONS) -> pd.DataFrame:
+    """Which races were weather-affected, measured rather than remembered.
+
+    Determined from the tyres the field actually fitted: a race where a quarter
+    of all laps ran on intermediates was not a dry race, whatever the calendar
+    says. Using the compound data rather than a weather feed keeps the rule
+    inside the dataset and independent of anything the model predicted.
+    """
+    df = raw_laps.copy()
+    df["IsWetTyre"] = ~df["Compound"].isin(DRY_COMPOUNDS)
+    out = (
+        df.groupby(["Season", "Circuit"])["IsWetTyre"]
+        .agg(WetLapShare="mean", NLaps="size")
+        .reset_index()
+    )
+    out["WetAffected"] = out["WetLapShare"] > a.max_wet_lap_share
+    return out.sort_values(["Season", "Circuit"]).reset_index(drop=True)

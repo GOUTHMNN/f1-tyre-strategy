@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from src.clean import clean_laps
-from src.config import ASSUMPTIONS, Race
+from src.config import ASSUMPTIONS, Circuit
 from src.model import (
     compare_linear_quadratic,
     estimate_compound_offsets,
@@ -371,20 +371,22 @@ def test_undercut_credit_brings_stops_forward_and_adds_them():
 # Data loading
 # ---------------------------------------------------------------------------
 
-def test_race_config_is_unambiguous():
-    """Every configured race must be pinned to a round number, not a name.
+def test_circuit_config_is_unambiguous():
+    """Every circuit must carry a full official event name, not a loose one.
 
     The study previously asked FastF1 for "Great Britain" and was handed the
     Austrian Grand Prix, which is a different circuit with a different tyre
-    allocation and 71 laps instead of 52. Nothing downstream noticed.
+    allocation and 71 laps instead of 52. Nothing downstream noticed. Round
+    numbers cannot be hard-coded either, because they move between seasons.
     """
-    from src.config import RACES
+    from src.config import CIRCUITS, SEASONS, TARGET_SEASON
 
-    assert all(isinstance(r, Race) for r in RACES)
-    assert all(r.round_number > 0 for r in RACES)
-    assert all(r.expect_event.endswith("Grand Prix") for r in RACES)
-    assert len({r.round_number for r in RACES}) == len(RACES)
-    assert len({r.label for r in RACES}) == len(RACES)
+    assert all(isinstance(c, Circuit) for c in CIRCUITS)
+    assert all(c.event_name.endswith("Grand Prix") for c in CIRCUITS)
+    assert len({c.event_name for c in CIRCUITS}) == len(CIRCUITS)
+    assert len({c.label for c in CIRCUITS}) == len(CIRCUITS)
+    assert len(SEASONS) >= 2, "compound offsets need more than one season to be identified"
+    assert TARGET_SEASON in SEASONS
 
 
 def test_infeasible_one_stop_falls_back_to_the_two_stop():
@@ -458,3 +460,248 @@ def test_late_stint_penalty_detects_a_cliff_and_ignores_a_straight_line():
     assert abs(linear_extra.median()) < 0.02, "a straight line must not look like a cliff"
     assert cliff_extra.median() > 0.2, "accelerating wear must be detected"
     assert cliff_extra.median() > linear_extra.median()
+
+
+# ---------------------------------------------------------------------------
+# Curvature
+# ---------------------------------------------------------------------------
+
+def _curved_laps(curve, n_stints=12, n_laps=22):
+    import pandas as pd
+
+    frames = []
+    rng = np.random.default_rng(3)
+    for i in range(n_stints):
+        age = np.arange(1.0, n_laps + 1)
+        y = 90 + 0.05 * age + curve * age**2 + rng.normal(0, 0.15, len(age))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "Season": 2024, "Circuit": "X", "Driver": f"D{i}", "Stint": 1.0,
+                    "Compound": "HARD", "TyreLife": age, "LapTimeFuelCorrected": y,
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_curvature_is_recovered_when_it_is_real():
+    from src.model import fit_stint_curvature, pool_curvature
+
+    pooled = pool_curvature(fit_stint_curvature(_curved_laps(0.004), ASSUMPTIONS), ASSUMPTIONS)
+    row = pooled.iloc[0]
+    assert row["Usable"], row["ExcludedReason"]
+    assert abs(row["CurvatureSecPerLap2"] - 0.004) < 0.0015
+    assert row["AppliedCurvature"] == row["CurvatureSecPerLap2"]
+
+
+def test_curvature_falls_back_to_zero_on_a_straight_line():
+    """The asymmetry that matters: inventing a cliff is worse than missing one.
+
+    A spurious positive curvature stops the car far too early. Falling back to
+    linear only returns the model to a bias it already has and already reports.
+    """
+    from src.model import fit_stint_curvature, pool_curvature
+
+    pooled = pool_curvature(fit_stint_curvature(_curved_laps(0.0), ASSUMPTIONS), ASSUMPTIONS)
+    row = pooled.iloc[0]
+    assert not row["Usable"]
+    assert row["AppliedCurvature"] == 0.0
+
+
+def test_curvature_shortens_the_longest_stint():
+    """Pricing the cliff must make long stints less attractive.
+
+    Note what this does *not* claim. Curvature does not simply move the stop
+    earlier: the cost of a stint grows with the square of its length, so equal
+    curvature on both compounds penalises an unbalanced split hardest and pushes
+    the two stints toward each other. Here that moves the stop from 27 to 30 -
+    later, not earlier, while still shortening the longest stint from 33 laps to
+    30. The invariant worth testing is the longest stint, not the stop lap.
+    """
+    deg = {"MEDIUM": 0.05, "HARD": 0.03}
+    offsets = {"MEDIUM": 0.0, "HARD": 0.35}
+    total = 60
+
+    def longest(curve):
+        stop = int(
+            optimise_one_stop(total, deg, offsets, pit_loss=22.0, curvature=curve)
+            .iloc[0]["StopLap"]
+        )
+        return max(stop, total - stop)
+
+    assert longest({"MEDIUM": 0.004, "HARD": 0.004}) < longest(None)
+
+
+def test_curvature_makes_stopping_twice_relatively_better():
+    """A one-stop runs the longest stints, so the cliff costs it the most."""
+    from src.strategy import optimal_summary
+
+    deg = {"MEDIUM": 0.05, "HARD": 0.03}
+    offsets = {"MEDIUM": 0.0, "HARD": 0.35}
+
+    flat = optimal_summary("X", 60, deg, offsets, 22.0)
+    curved = optimal_summary("X", 60, deg, offsets, 22.0, curvature={"MEDIUM": 0.004, "HARD": 0.004})
+    assert (
+        curved["TwoStopMinusOneStopSeconds"] < flat["TwoStopMinusOneStopSeconds"]
+    )
+
+
+def test_stint_time_curvature_matches_the_closed_form():
+    n, deg, curve, offset = 20, 0.05, 0.003, 0.4
+    ages = np.arange(1, n + 1)
+    expected = offset * n + float(np.sum(deg * ages + curve * ages**2))
+    assert stint_time(deg, offset, n, curve) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Multi-season handling
+# ---------------------------------------------------------------------------
+
+def test_wet_races_are_detected_from_the_tyres_fitted():
+    import pandas as pd
+
+    from src.model import wet_race_report
+
+    dry = pd.DataFrame({"Season": 2024, "Circuit": "Dry", "Compound": ["HARD"] * 100})
+    wet = pd.DataFrame(
+        {"Season": 2024, "Circuit": "Wet", "Compound": ["HARD"] * 70 + ["INTERMEDIATE"] * 30}
+    )
+    report = wet_race_report(pd.concat([dry, wet]), ASSUMPTIONS).set_index("Circuit")
+
+    assert not report.loc["Dry", "WetAffected"]
+    assert report.loc["Wet", "WetAffected"]
+
+
+def test_season_heterogeneity_flags_seasons_that_disagree():
+    """Pooling three seasons assumes 'SOFT' means the same rubber each year."""
+    import pandas as pd
+
+    from src.model import season_heterogeneity
+
+    rows = []
+    for season, slope in [(2022, 0.02), (2023, 0.02), (2024, 0.20)]:
+        for i in range(6):
+            rows.append(
+                {
+                    "Season": season, "Circuit": "X", "Compound": "SOFT", "Driver": f"D{i}",
+                    "NLaps": 20, "SlopeSecPerLap": slope,
+                    "SlopeCILow": slope - 0.004, "SlopeCIHigh": slope + 0.004,
+                }
+            )
+    report = season_heterogeneity(pd.DataFrame(rows), ASSUMPTIONS)
+    assert bool(report.iloc[0]["SeasonsDisagree"])
+    assert report.iloc[0]["SpreadSecPerLap"] > 0.15
+
+
+def test_joint_model_separates_drivers_by_season():
+    """The same name in 2022 and 2024 is a different car, not the same baseline."""
+    from src.model import _build_design
+
+    import pandas as pd
+
+    sub = pd.DataFrame(
+        {
+            "Season": [2022, 2022, 2024, 2024],
+            "Driver": ["VER", "VER", "VER", "VER"],
+            "Compound": ["HARD", "SOFT", "HARD", "SOFT"],
+            "TyreLife": [5.0, 6.0, 7.0, 8.0],
+            "LapNumber": [5.0, 6.0, 7.0, 8.0],
+            "TotalLaps": [57.0] * 4,
+        }
+    )
+    _, names = _build_design(sub, ["HARD", "SOFT"], "HARD")
+    driver_terms = [n for n in names if n.startswith("driver[")]
+    assert len(driver_terms) == 2, "one driver across two seasons must get two baselines"
+
+
+# ---------------------------------------------------------------------------
+# Backtest
+# ---------------------------------------------------------------------------
+
+def test_backtest_never_fits_on_the_season_it_predicts():
+    """The leakage guard. Without it, out-of-sample validation is theatre."""
+    import pandas as pd
+
+    from src import backtest as bt
+    from src.synthetic import simulate_race
+
+    raw = pd.concat(
+        [
+            simulate_race(circuit="Park", total_laps=57, seed=s, season=year)
+            for year, s in [(2022, 1), (2023, 2), (2024, 3)]
+        ],
+        ignore_index=True,
+    )
+
+    seen = []
+    original = bt.fit_on
+
+    def spy(train_raw, a=ASSUMPTIONS):
+        seen.append(sorted(train_raw["Season"].unique().tolist()))
+        return original(train_raw, a)
+
+    bt.fit_on = spy
+    try:
+        bt.rolling_backtest(raw, [2022, 2023, 2024], ASSUMPTIONS)
+    finally:
+        bt.fit_on = original
+
+    assert seen, "backtest never fitted anything"
+    assert [2022] in seen and [2022, 2023] in seen
+    for train_seasons in seen:
+        assert 2024 not in train_seasons or train_seasons == [2022, 2023, 2024]
+    # The season being predicted must never appear in its own training set.
+    assert all(2023 not in s for s in seen if s == [2022])
+
+
+def test_backtest_reports_a_baseline_it_can_be_judged_against():
+    import pandas as pd
+
+    from src.backtest import summarise_backtest
+
+    results = pd.DataFrame(
+        [
+            {"TestSeason": 2024, "TrainSeasons": "2022,2023", "StopLapError": 5.0,
+             "LinearOnlyError": 7.0, "BaselineError": 9.0, "PersistenceError": 3.0,
+             "StopCountCorrect": True, "WetAffected": False},
+            {"TestSeason": 2024, "TrainSeasons": "2022,2023", "StopLapError": -3.0,
+             "LinearOnlyError": -5.0, "BaselineError": 11.0, "PersistenceError": -1.0,
+             "StopCountCorrect": False, "WetAffected": False},
+        ]
+    )
+    summary = summarise_backtest(results)
+    row = summary.iloc[0]
+    assert row["ModelMAELaps"] == pytest.approx(4.0)
+    assert row["PersistenceMAELaps"] == pytest.approx(2.0)
+    assert row["StopCountAccuracy"] == pytest.approx(0.5)
+
+
+def test_pipeline_runs_on_a_single_season():
+    """Multi-season machinery must degrade gracefully, not crash.
+
+    Season heterogeneity has nothing to compare when only one season is present,
+    and `run.py demo` is exactly that case. An empty frame is the right answer;
+    an exception in the middle of the offline entry point is not.
+    """
+    import pandas as pd
+
+    from src.clean import clean_laps
+    from src.model import (
+        fit_stint_curvature,
+        fit_stint_slopes,
+        pool_curvature,
+        season_heterogeneity,
+        wet_race_report,
+    )
+    from src.synthetic import simulate_race
+
+    raw = simulate_race(circuit="Solo", season=2024, seed=4)
+    laps, _ = clean_laps(raw, ASSUMPTIONS)
+    fits = fit_stint_slopes(laps)
+
+    assert season_heterogeneity(fits, ASSUMPTIONS).empty
+    assert not wet_race_report(raw, ASSUMPTIONS).empty
+    # Curvature on an empty input must also return a frame, not raise.
+    assert pool_curvature(fit_stint_curvature(laps.head(0), ASSUMPTIONS), ASSUMPTIONS).empty
+    assert isinstance(pool_curvature(pd.DataFrame(), ASSUMPTIONS), pd.DataFrame)

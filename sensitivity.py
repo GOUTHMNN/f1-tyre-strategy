@@ -56,7 +56,9 @@ def _circuit_inputs(raw: pd.DataFrame, a):
     """Everything the optimiser needs, per circuit, under one set of assumptions."""
     laps, _ = clean_laps(raw, a)
     pooled = pool_degradation(fit_stint_slopes(laps), a)
-    joint, _ = fit_joint_model(laps, a)
+    # Point estimates only: the sweep reads offsets, never their intervals,
+    # and the bootstrap is the entire cost of the fit.
+    joint, _ = fit_joint_model(laps, a, bootstrap=False)
     limits = observed_stint_limits(laps, a)
     pit_loss_df = estimate_pit_loss(raw)
 

@@ -7,9 +7,9 @@ buried in code are numbers nobody checks.
 
 from dataclasses import dataclass
 
-SEASON = 2024
+SEASON = 2024  # default single-season entry point
 
-# Races are identified by round number, never by name.
+# Races are identified by their exact official event name, never by a loose one.
 #
 # FastF1 resolves session names with a fuzzy string match. Asking it for
 # "Great Britain" in 2024 returns the *Austrian* Grand Prix - a different circuit,
@@ -17,32 +17,49 @@ SEASON = 2024
 # level, so the mislabelled data flows downstream unchallenged. "United States"
 # is worse still: three 2024 rounds carry that country (Miami, Austin, Las Vegas).
 #
-# Round numbers are unambiguous, and `data.load_race` asserts the event that
-# comes back matches `expect_event` before a single lap is used.
+# Round numbers are unambiguous within a season but move between them (the
+# British Grand Prix was round 10 in 2022 and round 12 in 2024), so the round is
+# resolved from the schedule by *exact* name match at load time and the returned
+# event is verified again before a single lap is used.
 @dataclass(frozen=True)
-class Race:
-    round_number: int
-    label: str          # short name used in tables and figures
-    expect_event: str   # official EventName, verified at load time
+class Circuit:
+    label: str        # short name used in tables and figures
+    event_name: str   # exact official EventName, matched exactly against the schedule
 
 
 # Six circuits chosen to span the degradation spectrum. The original rationale
 # read "two high-deg abrasive tracks (Bahrain, Barcelona), two medium
 # (Silverstone, Austin), one low-deg but traffic-limited (Hungary), one
 # short-lap high-lap-count (Zandvoort)" - and the measurements only partly bear
-# that out. Bahrain is indeed the most severe (0.100 s/lap on hards) and Austin
-# the mildest (0.021), but Hungary (0.080) degrades slightly *harder* than
-# Barcelona (0.071) rather than being the low-deg outlier the selection assumed.
-# The spread is what the selection needed, and it delivered that; the prior
-# about individual circuits is left here as a prior that the data corrected.
-RACES = [
-    Race(1,  "Bahrain",       "Bahrain Grand Prix"),
-    Race(10, "Spain",         "Spanish Grand Prix"),
-    Race(12, "Great Britain", "British Grand Prix"),
-    Race(13, "Hungary",       "Hungarian Grand Prix"),
-    Race(15, "Netherlands",   "Dutch Grand Prix"),
-    Race(19, "United States", "United States Grand Prix"),
+# that out. Bahrain is indeed the most severe and Austin the mildest, but
+# Hungary degrades slightly *harder* than Barcelona rather than being the
+# low-deg outlier the selection assumed. The spread is what the selection
+# needed, and it delivered that; the prior about individual circuits is left
+# here as a prior the data corrected.
+CIRCUITS = [
+    Circuit("Bahrain",       "Bahrain Grand Prix"),
+    Circuit("Spain",         "Spanish Grand Prix"),
+    Circuit("Great Britain", "British Grand Prix"),
+    Circuit("Hungary",       "Hungarian Grand Prix"),
+    Circuit("Netherlands",   "Dutch Grand Prix"),
+    Circuit("United States", "United States Grand Prix"),
 ]
+
+# Three seasons of the same six circuits.
+#
+# One season cannot measure compound pace. Within a single race a team runs each
+# compound in one phase of the race, so compound and fuel load are the same
+# variable and the offset is not identified - five of six circuits failed that
+# test on 2024 alone. Different years bring different strategies to the same
+# track, and it is that variation across seasons which finally separates the two.
+#
+# The cost is that a "SOFT" is not the same rubber every year: Pirelli allocates
+# C1-C5 per event and the mapping moves. `model.season_heterogeneity` reports
+# where the per-season estimates disagree enough that pooling them is unsafe.
+SEASONS = [2022, 2023, 2024]
+
+# The season strategy is reported for, and the one the backtest predicts.
+TARGET_SEASON = 2024  # default single-season entry point
 
 DRY_COMPOUNDS = ("SOFT", "MEDIUM", "HARD")
 
@@ -94,6 +111,47 @@ class Assumptions:
 
     # A tyre that gets faster with age is a fitting artefact, not a finding.
     reject_negative_degradation: bool = True
+
+    # ---- Curvature --------------------------------------------------------
+    # A stint needs this many laps before a quadratic is worth fitting to it,
+    # and a circuit/compound cell this many stints before the pooled curvature
+    # is allowed to price a strategy. Curvature is a second derivative taken
+    # from ~20 noisy laps and deserves more evidence than a slope, not less.
+    min_laps_for_curvature: int = 12
+    min_stints_for_curvature: int = 8
+
+    # Whether the measured curvature is allowed to price strategies. It is not,
+    # and that decision was made by the backtest rather than by taste.
+    #
+    # The curvature is real: seven circuit/compound cells show it with bootstrap
+    # intervals clear of zero, and `late_stint_penalty` finds accelerating wear
+    # independently. It is also well motivated - pricing a stint linearly says a
+    # tyre's twentieth lap costs what its second did, which is false, and
+    # under-charging long stints is exactly what makes an optimiser stop late.
+    #
+    # It nonetheless makes held-out predictions worse: 8.0 laps of error against
+    # 6.0 without it on 2024, and 9.4 against 7.0 on dry races only. A second
+    # derivative estimated from twenty noisy laps is fitted to the tail of each
+    # stint, and the tail is where traffic and fuel-saving live, so it appears to
+    # be learning the end of a stint rather than the tyre.
+    #
+    # Kept, measured and reported; not applied. An elaboration that improves the
+    # story and worsens the predictions is exactly the kind a model should be
+    # made to earn its way past, and this one did not.
+    apply_curvature: bool = False
+
+    # ---- Wet races --------------------------------------------------------
+    # Share of a race's laps on wet or intermediate tyres above which it is
+    # treated as weather-affected. This is a dry-tyre strategy model, and a race
+    # decided by a rain shower is not evidence against it.
+    #
+    # The threshold is set from the shape of the data rather than tuned: across
+    # eighteen races the wet share is either 0.0% or 24.4%, nothing in between,
+    # so any cutoff in that gap gives the same answer and none of them can be
+    # nudged to flatter a result. Backtest scores are reported both ways
+    # regardless, because dropping inconvenient races on the quiet is how an
+    # honest evaluation becomes a dishonest one.
+    max_wet_lap_share: float = 0.05
 
     # ---- Strategy ---------------------------------------------------------
     # Cap stint length at the longest actually observed for that compound and

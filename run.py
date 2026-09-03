@@ -21,18 +21,22 @@ import pandas as pd
 
 from src import plots
 from src.clean import clean_laps
-from src.config import ASSUMPTIONS, DATA_DIR, OUTPUT_DIR, RACES, SEASON
+from src.config import ASSUMPTIONS, CIRCUITS, DATA_DIR, OUTPUT_DIR, SEASONS, TARGET_SEASON
 from src.data import load_races, load_raw, save_raw
+from src.backtest import rolling_backtest, summarise_backtest
 from src.model import (
     compare_linear_quadratic,
     estimate_compound_offsets,
     estimate_pit_loss,
     fit_joint_model,
+    fit_stint_curvature,
     fit_stint_slopes,
     identifiability_report,
     late_stint_penalty,
     observed_stint_limits,
+    pool_curvature,
     pool_degradation,
+    season_heterogeneity,
     summarise_late_stint_penalty,
 )
 from src.strategy import (
@@ -47,7 +51,7 @@ log = logging.getLogger("run")
 
 
 def fetch() -> pd.DataFrame:
-    raw = load_races(RACES, season=SEASON)
+    raw = load_races(CIRCUITS, seasons=SEASONS)
     path = save_raw(raw)
     log.info("Saved %d laps to %s", len(raw), path)
     return raw
@@ -66,6 +70,8 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
     naive_offsets = estimate_compound_offsets(stint_fits)
     joint_compounds, joint_fuel = fit_joint_model(laps, a)
     identifiability = identifiability_report(joint_compounds, a)
+    curvature = pool_curvature(fit_stint_curvature(laps, a), a)
+    heterogeneity = season_heterogeneity(stint_fits, a)
     stint_limits = observed_stint_limits(laps, a)
     pit_loss_df = estimate_pit_loss(raw)
     linearity = compare_linear_quadratic(laps)
@@ -79,6 +85,8 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
         ("compound_offsets_joint", joint_compounds),
         ("fuel_estimates", joint_fuel),
         ("identifiability", identifiability),
+        ("curvature", curvature),
+        ("season_heterogeneity", heterogeneity),
         ("stint_limits", stint_limits),
         ("pit_loss", pit_loss_df),
         ("linearity_check", linearity),
@@ -120,6 +128,32 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
                 100 * row["ShareAccelerating"],
             )
 
+    if not curvature.empty:
+        applied = curvature[curvature["Usable"]]
+        log.info(
+            "Curvature measured on %d of %d circuit/compound cells (applied to "
+            "strategy: %s - see Assumptions.apply_curvature):",
+            len(applied), len(curvature), "yes" if a.apply_curvature else "no",
+        )
+        for _, row in applied.iterrows():
+            log.info(
+                "  %-14s %-7s %+.5f s/lap^2  [%.5f, %.5f]",
+                row["Circuit"], row["Compound"], row["CurvatureSecPerLap2"],
+                row["CurvatureCILow"], row["CurvatureCIHigh"],
+            )
+
+    disagreeing = (
+        heterogeneity[heterogeneity["SeasonsDisagree"]] if not heterogeneity.empty else pd.DataFrame()
+    )
+    if not disagreeing.empty:
+        log.warning("Cells where the seasons disagree - pooling may mix different rubber:")
+        for _, row in disagreeing.iterrows():
+            log.warning(
+                "  %-14s %-7s %s: %.3f to %.3f s/lap (spread %.3f)",
+                row["Circuit"], row["Compound"], row["Seasons"],
+                row["MinDeg"], row["MaxDeg"], row["SpreadSecPerLap"],
+            )
+
     excluded = pooled[~pooled["Usable"]] if not pooled.empty else pd.DataFrame()
     if not excluded.empty:
         log.warning("Degradation cells excluded from the optimiser:")
@@ -142,17 +176,22 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
     # ---- Optimisation ----------------------------------------------------
     usable = pooled[pooled["Usable"]] if not pooled.empty else pd.DataFrame()
     total_laps = raw.groupby("Circuit")["TotalLaps"].max().to_dict()
-    pit_loss = (
-        pit_loss_df.set_index("Circuit")["PitLossMedian"].to_dict()
-        if not pit_loss_df.empty
-        else {}
-    )
+    # Several seasons are pooled for tyre behaviour, but the pit lane belongs to
+    # one race: use the target season's measurement, falling back to the median
+    # across seasons where that race is missing.
+    if not pit_loss_df.empty:
+        target = pit_loss_df[pit_loss_df["Season"] == TARGET_SEASON]
+        pit_loss = pit_loss_df.groupby("Circuit")["PitLossMedian"].median().to_dict()
+        pit_loss.update(target.set_index("Circuit")["PitLossMedian"].to_dict())
+    else:
+        pit_loss = {}
     identified = (
         identifiability.set_index("Circuit")["OffsetsIdentified"].to_dict()
         if not identifiability.empty
         else {}
     )
-    seasons = raw.groupby("Circuit")["Season"].max().to_dict()
+    total_laps = raw[raw["Season"] == TARGET_SEASON].groupby("Circuit")["TotalLaps"].max().to_dict()
+    seasons = {c: TARGET_SEASON for c in total_laps}
 
     summaries, all_plans = [], {}
     for circuit in sorted(usable["Circuit"].unique()) if not usable.empty else []:
@@ -171,6 +210,10 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
             log.warning("%s: fewer than two usable compounds, skipping", circuit)
             continue
 
+        if circuit not in total_laps:
+            log.warning("%s: not raced in the target season, skipping", circuit)
+            continue
+
         loss = pit_loss.get(circuit)
         if loss is None:
             log.warning("%s: no pit-loss estimate, skipping", circuit)
@@ -182,13 +225,25 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
             .to_dict()
         )
 
+        curve = (
+            curvature[curvature["Circuit"] == circuit]
+            .set_index("Compound")["AppliedCurvature"]
+            .to_dict()
+            if not curvature.empty and a.apply_curvature
+            else {}
+        )
+
         laps_total = int(total_laps[circuit])
-        summary = optimal_summary(circuit, laps_total, shared, offs, float(loss), max_stint=caps, a=a)
+        summary = optimal_summary(
+            circuit, laps_total, shared, offs, float(loss),
+            max_stint=caps, curvature=curve, a=a,
+        )
         summary["Season"] = seasons.get(circuit)
         summary["OffsetsIdentified"] = bool(identified.get(circuit, False))
         summaries.append(summary)
         all_plans[circuit] = optimise_one_stop(
-            laps_total, shared, offs, float(loss), max_stint=caps, undercut_gain_s=a.undercut_gain_s
+            laps_total, shared, offs, float(loss), max_stint=caps,
+            undercut_gain_s=a.undercut_gain_s, curvature=curve,
         )
 
     summary_df = pd.DataFrame(summaries)
@@ -199,11 +254,33 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
     if not comparison.empty:
         comparison.to_csv(f"{outdir}/model_vs_actual.csv", index=False)
 
+    # ---- Out-of-sample validation ---------------------------------------
+    # The only check in the project that is neither synthetic nor in-sample.
+    seasons_present = sorted(raw["Season"].unique())
+    backtest = rolling_backtest(raw, seasons_present, a) if len(seasons_present) > 1 else pd.DataFrame()
+    backtest_summary = summarise_backtest(backtest)
+    backtest.to_csv(f"{outdir}/backtest.csv", index=False)
+    backtest_summary.to_csv(f"{outdir}/backtest_summary.csv", index=False)
+
+    if not backtest_summary.empty:
+        log.info("Out-of-sample backtest (model never sees the season it predicts):")
+        for _, row in backtest_summary.iterrows():
+            log.info(
+                "  train %-9s -> %d%s: first-stop MAE %.1f laps  (baselines: "
+                "last season %.1f, half distance %.1f)  bias %+.1f  stop count %.0f%% correct",
+                row["TrainSeasons"], row["TestSeason"],
+                " dry only" if row["DryRacesOnly"] else "         ", row["ModelMAELaps"],
+                row["PersistenceMAELaps"], row["BaselineMAELaps"],
+                row["MeanSignedErrorLaps"], 100 * row["StopCountAccuracy"],
+            )
+
     # ---- Figures ---------------------------------------------------------
     if not usable.empty:
         plots.plot_degradation_by_circuit(usable, outdir)
     if not joint_fuel.empty:
         plots.plot_fuel_estimates(joint_fuel, a, outdir)
+    if not backtest_summary.empty:
+        plots.plot_backtest(backtest_summary, outdir)
     if not stint_fits.empty and not usable.empty:
         headline = usable.groupby("Circuit")["NLaps"].sum().idxmax()
         plots.plot_stint_evidence(laps, stint_fits, headline, outdir)
@@ -234,6 +311,10 @@ def analyse(raw: pd.DataFrame, outdir: str = OUTPUT_DIR, a=ASSUMPTIONS) -> dict:
         "late_stint_summary": late_summary,
         "summary": summary_df,
         "comparison": comparison,
+        "curvature": curvature,
+        "heterogeneity": heterogeneity,
+        "backtest": backtest,
+        "backtest_summary": backtest_summary,
     }
 
 

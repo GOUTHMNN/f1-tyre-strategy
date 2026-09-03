@@ -1,37 +1,37 @@
 Circuit,CapMarginLaps,OneStopFeasible,BestOneStopLap,BestOneStopLapUncapped,RecommendedStops
-Bahrain,0,False,,31,2
-Great Britain,0,False,,29,2
-Hungary,0,True,39.0,33,2
-Netherlands,0,True,49.0,30,2
-Spain,0,True,36.0,33,2
-United States,0,True,29.0,29,1
-Bahrain,2,False,,31,2
-Great Britain,2,False,,29,2
-Hungary,2,True,37.0,33,2
-Netherlands,2,True,47.0,30,2
-Spain,2,True,34.0,33,2
-United States,2,True,29.0,29,1
-Bahrain,3,False,,31,2
-Great Britain,3,False,,29,2
-Hungary,3,True,36.0,33,2
-Netherlands,3,True,46.0,30,2
-Spain,3,True,33.0,33,2
-United States,3,True,29.0,29,1
-Bahrain,5,True,31.0,31,2
-Great Britain,5,False,,29,2
-Hungary,5,True,34.0,33,2
-Netherlands,5,True,44.0,30,2
-Spain,5,True,33.0,33,2
-United States,5,True,29.0,29,1
-Bahrain,8,True,31.0,31,2
-Great Britain,8,True,29.0,29,1
-Hungary,8,True,33.0,33,2
-Netherlands,8,True,42.0,30,2
-Spain,8,True,33.0,33,2
-United States,8,True,29.0,29,1
-Bahrain,12,True,31.0,31,2
-Great Britain,12,True,27.0,29,1
-Hungary,12,True,33.0,33,2
-Netherlands,12,True,42.0,30,2
-Spain,12,True,33.0,33,2
-United States,12,True,29.0,29,1
+Bahrain,0,False,,23,2
+Great Britain,0,True,27.0,27,1
+Hungary,0,True,29.0,40,2
+Netherlands,0,True,40.0,40,2
+Spain,0,True,34.0,34,2
+United States,0,True,30.0,30,1
+Bahrain,2,True,31.0,23,2
+Great Britain,2,True,27.0,27,1
+Hungary,2,True,40.0,40,2
+Netherlands,2,True,40.0,40,2
+Spain,2,True,34.0,34,2
+United States,2,True,30.0,30,1
+Bahrain,3,True,25.0,23,2
+Great Britain,3,True,27.0,27,1
+Hungary,3,True,40.0,40,2
+Netherlands,3,True,40.0,40,2
+Spain,3,True,34.0,34,2
+United States,3,True,30.0,30,1
+Bahrain,5,True,34.0,23,2
+Great Britain,5,True,27.0,27,1
+Hungary,5,True,30.0,40,2
+Netherlands,5,True,40.0,40,2
+Spain,5,True,34.0,34,2
+United States,5,True,30.0,30,1
+Bahrain,8,True,34.0,23,2
+Great Britain,8,True,27.0,27,1
+Hungary,8,True,40.0,40,2
+Netherlands,8,True,40.0,40,2
+Spain,8,True,34.0,34,2
+United States,8,True,30.0,30,1
+Bahrain,12,True,34.0,23,2
+Great Britain,12,True,27.0,27,1
+Hungary,12,True,40.0,40,2
+Netherlands,12,True,40.0,40,2
+Spain,12,True,34.0,34,2
+United States,12,True,30.0,30,1

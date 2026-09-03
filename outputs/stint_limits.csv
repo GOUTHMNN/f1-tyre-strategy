@@ -1,17 +1,19 @@
 Circuit,Compound,MaxObservedStintLaps,MedianStintLaps,MaxAllowedStintLaps
-Bahrain,HARD,29,20.0,32
-Bahrain,SOFT,21,14.0,24
-Great Britain,HARD,15,14.0,18
-Great Britain,MEDIUM,25,23.5,28
-Great Britain,SOFT,16,14.0,19
-Hungary,HARD,41,27.0,44
-Hungary,MEDIUM,31,21.5,34
-Hungary,SOFT,16,16.0,19
-Netherlands,HARD,57,41.0,60
-Netherlands,MEDIUM,32,27.0,35
-Netherlands,SOFT,23,20.0,26
-Spain,HARD,37,28.0,40
-Spain,MEDIUM,30,23.0,33
-Spain,SOFT,25,18.0,28
-United States,HARD,40,30.0,43
-United States,MEDIUM,31,21.0,34
+Bahrain,HARD,29,19.0,32
+Bahrain,MEDIUM,23,14.0,26
+Bahrain,SOFT,24,14.0,27
+Great Britain,HARD,31,17.5,34
+Great Britain,MEDIUM,34,24.0,37
+Great Britain,SOFT,30,15.0,33
+Hungary,HARD,45,27.0,48
+Hungary,MEDIUM,42,22.0,45
+Hungary,SOFT,29,16.0,32
+Netherlands,HARD,57,37.0,60
+Netherlands,MEDIUM,32,24.0,35
+Netherlands,SOFT,49,18.0,52
+Spain,HARD,50,26.5,53
+Spain,MEDIUM,35,20.5,38
+Spain,SOFT,27,18.0,30
+United States,HARD,40,21.5,43
+United States,MEDIUM,37,17.0,40
+United States,SOFT,8,8.0,11
