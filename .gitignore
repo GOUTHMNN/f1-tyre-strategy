@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 .DS_Store
+
+# Personal documents that landed in the project folder — never publish these.
+Claude outputs/
